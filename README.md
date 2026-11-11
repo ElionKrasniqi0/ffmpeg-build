@@ -33,7 +33,18 @@ scripts/build-ios.sh                             # out/ios-*/{include,lib}, stat
 ```
 
 Build one Android ABI per invocation (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`); YMusicV4
-needs `arm64-v8a`, `x86` and `x86_64`.
+needs `arm64-v8a`, `x86` and `x86_64`. StartMusicV3 consumes the same sibling packs
+(`../ffmpeg-build/out/android-<abi>/pack`).
+
+### Windows (MSYS2) notes for Android
+
+- Run `scripts/build-android.sh` from a **MINGW64** shell so host `gcc` has CRT headers
+  (`HOSTCC`). NDK clang cannot be used as `--host-cc` (no Windows `ctype.h`).
+- Shine bootstrap needs MSYS autotools (`pacman -S autoconf automake libtool`); the script
+  forces `/usr/bin` ahead of `/mingw64/bin` during `autoreconf` so `LT_INIT` expands.
+- Android SONAME flatten needs a working **64-bit** `patchelf` on `PATH`. A convenient
+  copy can live at `tools/patchelf.exe` (NixOS `patchelf-win64`); then:
+  `msys2_shell -mingw64 -c './.run-android-arm64.sh'`.
 
 Each desktop/Android build writes:
 

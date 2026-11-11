@@ -241,12 +241,45 @@ flatten_elf_sonames_unversioned() {
   done
 }
 
-# shine ships no configure; bootstrap needs autoreconf and libtoolize. Failing loudly here beats
-# exit 127 from a missing tool three steps later.
+# shine ships no configure (gitignored); bootstrap needs autoreconf + libtoolize.
+# A prior attempt without libtool leaves an executable configure that still contains a
+# literal LT_INIT and no Makefile.in — treating "configure exists" as success then
+# makes every later build fail with `LT_INIT: command not found`.
+shine_bootstrap_ok() {
+  [ -x "$SRC/shine/configure" ] || return 1
+  [ -f "$SRC/shine/Makefile.in" ] || return 1
+  [ -f "$SRC/shine/ltmain.sh" ] || return 1
+  [ -f "$SRC/shine/m4/libtool.m4" ] || return 1
+  ! grep -q '^LT_INIT$' "$SRC/shine/configure"
+}
+
 bootstrap_shine() {
-  [ -x "$SRC/shine/configure" ] && return 0
+  if shine_bootstrap_ok; then
+    return 0
+  fi
   command -v autoreconf >/dev/null || { echo "autoreconf missing (install autoconf/automake/libtool)" >&2; return 1; }
-  ( cd "$SRC/shine" && ./bootstrap )
+  command -v libtoolize >/dev/null || { echo "libtoolize missing (install libtool)" >&2; return 1; }
+  echo "[deps] shine: regenerating autotools (configure/Makefile.in/libtool)"
+  (
+    cd "$SRC/shine"
+    # MSYS2 often puts MinGW tools ahead of /usr/bin. Keep the MSYS autotools set
+    # together so libtoolize and aclocal agree on macro directories.
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CLANG*|UCRT*|CYGWIN*)
+        export PATH="/usr/bin:/bin:${PATH}"
+        ;;
+    esac
+    rm -rf autom4te.cache
+    rm -f aclocal.m4 configure Makefile.in libtool ltmain.sh \
+      config.status config.log compile depcomp install-sh missing \
+      config.guess config.sub test-driver
+    mkdir -p m4
+    ./bootstrap
+  )
+  shine_bootstrap_ok || {
+    echo "FATAL: shine bootstrap left LT_INIT unexpanded or Makefile.in/ltmain.sh missing" >&2
+    return 1
+  }
 }
 
 # Applied to a freshly checked-out submodule. Idempotent: a second run is a no-op rather than an

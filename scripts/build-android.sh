@@ -43,12 +43,57 @@ case "$ABI" in
   *) echo "unknown ABI: $ABI" >&2; exit 1 ;;
 esac
 
-TC="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$(uname -s | tr '[:upper:]' '[:lower:]')-x86_64"
+# NDK prebuilt dirs are windows-x86_64 / linux-x86_64 / darwin-x86_64. MSYS2's
+# `uname -s` is MSYS_NT-... / MINGW64_NT-..., which does not match those names.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CLANG*|UCRT*|CYGWIN*|Windows*) NDK_HOST_TAG=windows-x86_64 ;;
+  Darwin)  NDK_HOST_TAG=darwin-x86_64 ;;
+  Linux)   NDK_HOST_TAG=linux-x86_64 ;;
+  *)       NDK_HOST_TAG="$(uname -s | tr '[:upper:]' '[:lower:]')-x86_64" ;;
+esac
+TC="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/$NDK_HOST_TAG"
 [ -d "$TC" ] || { echo "no NDK toolchain at $TC" >&2; exit 1; }
-# The toolchain goes on PATH and the tools are named bare, because ffmpeg records --cc/--ar/... in
-# the configure line it compiles into the binary. Absolute paths there would publish the NDK
-# location, which on a developer machine is under $HOME.
-export PATH="$TC/bin:$PATH"
+# Cross builds need a native C11 host compiler for configure host tools. On Windows that
+# means mingw-w64 gcc (with its CRT headers). NDK clang is not usable as HOSTCC — it has
+# no Windows ctype.h. Prefer an explicit HOSTCC; otherwise pick a mingw gcc on PATH or
+# under the usual MSYS2 prefixes. Run this script from a MINGW64/UCRT64 shell so gcc works.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CLANG*|UCRT*|CYGWIN*|Windows*)
+    if [ -z "${HOSTCC:-}" ]; then
+      if command -v gcc >/dev/null; then
+        HOSTCC=$(command -v gcc)
+      else
+        for cand in /mingw64/bin/gcc /ucrt64/bin/gcc /clang64/bin/gcc; do
+          if [ -x "$cand" ]; then HOSTCC=$cand; break; fi
+        done
+      fi
+    fi
+    if [ -z "${HOSTCC:-}" ]; then
+      echo "FATAL: set HOSTCC to mingw-w64 gcc (run from a MINGW64 shell, or pacman -S mingw-w64-x86_64-gcc)" >&2
+      exit 1
+    fi
+    # Keep mingw ahead of the NDK on PATH: if llvm-as/clang from the NDK shadow mingw's
+    # assembler, HOSTCC cannot compile host programs (configure then reports "lacks C11").
+    _mingw_bin=$(cd "$(dirname "$HOSTCC")" && pwd)
+    export PATH="$_mingw_bin:$TC/bin:$PATH"
+    _hostcc_probe=$(mktemp "${TMPDIR:-/tmp}/ff_hostcc.XXXXXX")
+    printf 'int x;\n' > "${_hostcc_probe}.c"
+    if ! "$HOSTCC" -std=c11 -c -o "${_hostcc_probe}.o" "${_hostcc_probe}.c" >/dev/null 2>&1; then
+      rm -f "${_hostcc_probe}" "${_hostcc_probe}.c" "${_hostcc_probe}.o"
+      echo "FATAL: HOSTCC=$HOSTCC cannot compile a C11 host program (use a MINGW64 shell)" >&2
+      exit 1
+    fi
+    rm -f "${_hostcc_probe}" "${_hostcc_probe}.c" "${_hostcc_probe}.o"
+    export HOSTCC
+    echo "[toolchain] host-cc=$HOSTCC"
+    ;;
+  *)
+    # The toolchain goes on PATH and the tools are named bare, because ffmpeg records --cc/--ar/... in
+    # the configure line it compiles into the binary. Absolute paths there would publish the NDK
+    # location, which on a developer machine is under $HOME.
+    export PATH="$TC/bin:$PATH"
+    ;;
+esac
 export CC="${TRIPLE}${API}-clang"
 export AR=llvm-ar NM=llvm-nm RANLIB=llvm-ranlib STRIP=llvm-strip
 command -v "$CC" >/dev/null || { echo "no $CC in $TC/bin" >&2; exit 1; }
@@ -103,6 +148,7 @@ PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/lib64/pkgconfig" ./configure \
   --prefix="$PREFIX_REL" \
   --target-os=android --arch="$ARCH" --cpu="$CPU" --enable-cross-compile ${ASM_OPT:-} \
   --cc="$CC" --ar="$AR" --nm="$NM" --ranlib="$RANLIB" --strip="$STRIP" \
+  ${HOSTCC:+--host-cc="$HOSTCC"} \
   --enable-jni --enable-mediacodec \
   --enable-pic \
   --optflags="$FF_OPTFLAGS" \
