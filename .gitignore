@@ -1,0 +1,15 @@
+# Sources are submodules; build output never enters git.
+/.deps*
+/out/
+/.cache
+/src/dav1d
+/src/libvpx
+*.o
+*.a
+
+# Signing material never belongs here.
+*.p12
+*.cer
+*.keychain-db
+/src/nv-codec-headers
+/src/vulkan-headers

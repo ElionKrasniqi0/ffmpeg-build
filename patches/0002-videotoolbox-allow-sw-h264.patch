@@ -1,0 +1,29 @@
+videotoolbox: do not require hardware decode for H.264
+
+ffmpeg sets RequireHardwareAcceleratedVideoDecoder for H.264 (HEVC/ProRes
+only Enable). iOS Simulator has no H.264 HW, so VTDecompressionSessionCreate
+fails ("Failed setup for format videotoolbox_vld") and MSE falls back to
+libav software h264, which breaks YouTube open-GOP seeks.
+
+EnableHardwareAcceleratedVideoDecoder still uses HW on device; on the
+simulator VideoToolbox's own software decoder runs.
+---
+diff --git a/libavcodec/videotoolbox.c b/libavcodec/videotoolbox.c
+index 0000000000..0000000000 100644
+--- a/libavcodec/videotoolbox.c
++++ b/libavcodec/videotoolbox.c
+@@ -845,13 +845,8 @@ static CFDictionaryRef videotoolbox_decoder_config_create(CMVideoCodecType codec
+                                                                    &kCFTypeDictionaryValueCallBacks);
+ 
+     CFDictionarySetValue(config_info,
+-                        avctx->codec_id == AV_CODEC_ID_HEVC
+-                        || avctx->codec_id == AV_CODEC_ID_PRORES
+-                        || avctx->codec_id == AV_CODEC_ID_PRORES_RAW
+-                            ?
+-                            kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder :
+-                            kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder,
++                        kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder,
+                          kCFBooleanTrue);
+ 
+     avc_info = CFDictionaryCreateMutable(kCFAllocatorDefault,
+                                          1,
